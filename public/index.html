@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101319">
+  <title>CS2 · C4 倒计时</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#101319;color:#edf0f6}
+    *{box-sizing:border-box}body{margin:0;min-height:100svh;display:grid;place-items:center;padding:24px}
+    main{width:min(100%,480px);text-align:center}header{display:flex;justify-content:space-between;align-items:center;font-size:12px;letter-spacing:2px;color:#929dad}
+    .connection{letter-spacing:0;display:flex;align-items:center;gap:7px}.dot{width:7px;height:7px;border-radius:50%;background:#657083}.online .dot{background:#7ce3b0}
+    .dial{position:relative;width:min(76vw,320px);aspect-ratio:1;margin:52px auto 32px;display:grid;place-items:center}
+    svg{position:absolute;width:100%;height:100%;transform:rotate(-90deg)}circle{fill:none;stroke-width:3}.track{stroke:#252d38}.progress{stroke:#ffbb66;stroke-linecap:round;stroke-dasharray:603.186;stroke-dashoffset:603.186}
+    .value{font-size:clamp(64px,17vw,92px);font-weight:600;letter-spacing:-5px;font-variant-numeric:tabular-nums;line-height:1.1}.unit{color:#929dad;font-size:13px;margin-top:12px;letter-spacing:3px}
+    h1{font-size:24px;font-weight:500;margin:0 0 12px}.hint{color:#929dad;font-size:14px;line-height:1.8;margin:0}footer{margin-top:56px;padding-top:20px;border-top:1px solid #252d38;color:#667384;font-size:12px;letter-spacing:1px}
+    .planted .value{color:#ffbb66}.urgent .value{color:#ff6b6b}.urgent .progress{stroke:#ff6b6b}
+    .defused .value{color:#69b5ff}.defused .progress{stroke:#69b5ff}
+  </style>
+</head>
+<body>
+  <main id="app">
+    <header><span>CS2 / C4 TIMER</span><span class="connection" id="connection"><i class="dot"></i><span id="connectionText">正在连接</span></span></header>
+    <div class="dial"><svg viewBox="0 0 208 208" aria-hidden="true"><circle class="track" cx="104" cy="104" r="96"/><circle id="progress" class="progress" cx="104" cy="104" r="96"/></svg><div><div class="value" id="time">—</div><div class="unit" id="unit">等待安放</div></div></div>
+    <h1 id="status" aria-live="polite">炸弹未安放</h1>
+    <p class="hint" id="hint">保持页面打开，安放后自动开始 40 秒倒计时。</p>
+    <footer>局域网实时同步 · 无需刷新</footer>
+  </main>
+  <script>
+    const app = document.getElementById('app');
+    const time = document.getElementById('time');
+    const unit = document.getElementById('unit');
+    const status = document.getElementById('status');
+    const hint = document.getElementById('hint');
+    const progress = document.getElementById('progress');
+    const connection = document.getElementById('connection');
+    const connectionText = document.getElementById('connectionText');
+    let state = null, deadline = 0, serverOnline = false, lastSync = 0;
+    function render() {
+      const now = performance.now();
+      const online = serverOnline && now - lastSync < 3000;
+      const gsi = online && state?.gsiConnected && (state.gsiAgeMs + now - lastSync < 10000);
+      connection.classList.toggle('online', Boolean(gsi));
+      connectionText.textContent = !online ? '服务器未连接' : gsi ? '游戏已连接' : '等待游戏连接';
+      const planted = Boolean(state?.planted);
+      const defused = Boolean(state?.defused);
+      const remaining = defused ? state.remainingMs : planted ? Math.max(0, deadline - now) : 0;
+      app.classList.toggle('planted', planted);
+      app.classList.toggle('defused', defused);
+      app.classList.toggle('urgent', planted && remaining <= 10000);
+      time.textContent = planted || defused ? (remaining / 1000).toFixed(1) : '—';
+      unit.textContent = defused ? '拆除时剩余秒数' : planted ? '剩余秒数' : '等待安放';
+      status.textContent = defused ? '炸弹已拆除' : planted ? (remaining > 0 ? 'C4 已安放' : '等待回合结果') : '炸弹未安放';
+      hint.textContent = !online ? '连接中断，正在自动重连；显示的是最后一次状态。'
+        : !gsi ? '未收到游戏状态，请检查 cfg 配置或进入对局。'
+        : defused ? '倒计时已停止，等待下一回合。'
+        : planted ? '回合结束后自动清除倒计时。' : '保持页面打开，安放后自动开始 40 秒倒计时。';
+      progress.style.strokeDashoffset = 603.186 * (1 - remaining / (state?.durationMs || 40000));
+    }
+    async function sync() {
+      const start = performance.now();
+      try {
+        const response = await fetch('/api/state', { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+        if (!response.ok) throw new Error('Unavailable');
+        state = await response.json();
+        lastSync = performance.now();
+        deadline = lastSync + state.remainingMs - (lastSync - start) / 2;
+        serverOnline = true;
+      } catch { serverOnline = false; }
+      render();
+      setTimeout(sync, 500);
+    }
+    setInterval(render, 50);
+    document.addEventListener('visibilitychange', render);
+    sync();
+  </script>
+</body>
+</html>
